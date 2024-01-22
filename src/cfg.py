@@ -1,4 +1,6 @@
 from queue import Queue
+from collections import defaultdict
+from copy import deepcopy
 
 
 class Nonterminal:
@@ -79,6 +81,7 @@ class CFGrammar:
         self.start = start
         self.rules = rules or []
         self.nonterminals = self._get_nonterminals()
+        self.rules_by_nonterminals = self._get_rules_by_nonterminals()
 
     def __eq__(self, other):
         return (
@@ -99,6 +102,10 @@ class CFGrammar:
             + "\n".join(map(str, self.rules))
         )
 
+    def save(self, path):
+        with open(path, mode="w", encoding="utf-8") as file:
+            file.write("\n".join(map(str, self.rules)))
+
     def _get_nonterminals(self):
         nonterminals = set()
         for rule in self.rules:
@@ -108,12 +115,92 @@ class CFGrammar:
             )
         return nonterminals
 
+    def _get_rules_by_nonterminals(self):
+        rules_by_nts = defaultdict(list)
+        for rule in self.rules:
+            rules_by_nts[rule.left].append(rule)
+        return rules_by_nts
+
     def new_nonterminal(self, sym, used_nonterminals, mark=None):
         suffix = 0
         sym = sym.upper()
         while Nonterminal(sym + str(suffix)) in self.nonterminals | used_nonterminals:
             suffix += 1
         return Nonterminal(sym + str(suffix), mark)
+
+    def first(self, k, symbols):
+        def cartesian_product(set1, set2, max_num):
+            if not set1:
+                return set2
+            if not set2:
+                return set1
+            return {(a + b)[:max_num] for a in set1 for b in set2}
+
+        def first_rec(k, symbols, visited):
+            if k == 0:
+                return set()
+
+            if not symbols:
+                return {tuple()}
+
+            if isinstance(symbols[0], Terminal):
+                return cartesian_product(
+                    {(symbols[0],)}, first_rec(k - 1, symbols[1:], visited), max_num=k
+                )
+
+            curr_visited = deepcopy(visited)
+            first = set()
+
+            for rule in self.rules_by_nonterminals[symbols[0]]:
+                if (
+                    rule.right
+                    and rule.right[0] == symbols[0]
+                    and symbols[0] in curr_visited
+                ):
+                    first |= cartesian_product(
+                        first_rec(k - 1, rule.right, curr_visited),
+                        first_rec(k - 1, symbols[1:], curr_visited),
+                        max_num=k,
+                    )
+                else:
+                    curr_visited.add(symbols[0])
+                    first |= first_rec(k, rule.right + symbols[1:], curr_visited)
+
+            return first
+
+        return first_rec(k, symbols, set())
+
+    def follow(self, k, nonterminal):
+        def follow_rec(k, nonterminal):
+            if nonterminal == new_start:
+                return {(Terminal("$"),)}
+
+            if nonterminal in visited:
+                return set()
+            visited.add(nonterminal)
+
+            follow = set()
+
+            for rule in self.rules:
+                if nonterminal in rule.right:
+                    idx = rule.right.index(nonterminal)
+                    previous = rule.right[idx + 1 :]
+                    following = follow_rec(k, rule.left)
+                    if following:
+                        for flw in following:
+                            follow |= self.first(k, previous + list(flw))
+                    elif previous:
+                        follow |= self.first(k, previous)
+
+            return follow
+
+        new_start = self.new_nonterminal(self.start.symbol, set())
+        self.rules.append(Rule(new_start, [self.start]))
+        visited = set()
+        res = follow_rec(k, nonterminal)
+        self.rules.pop()
+
+        return res
 
     @staticmethod
     def remove_long_rules(cfg):
@@ -212,13 +299,13 @@ class CFGrammar:
         concerned_rules = {nt: set() for nt in cfg.nonterminals}
         new_rules = []
         unit_rules = Queue()
-        concerned_unit_rules = []
+        concerned_unit_rules = set()
 
         for idx, rule in enumerate(cfg.rules):
             if len(rule.right) == 1 and isinstance(rule.right[0], Nonterminal):
                 if rule.left != rule.right[0]:
                     unit_rules.put(rule)
-                    concerned_unit_rules.append(rule)
+                    concerned_unit_rules.add(rule)
                     concerned_rules[rule.left].add(idx)
             else:
                 new_rules.append(Rule(rule.left, rule.right))
@@ -226,8 +313,10 @@ class CFGrammar:
 
         while not unit_rules.empty():
             unit_rule = unit_rules.get()
+
             for idx in concerned_rules[unit_rule.right[0]]:
                 new_rule = Rule(unit_rule.left, cfg.rules[idx].right)
+
                 if new_rule in concerned_unit_rules:
                     continue
                 if len(new_rule.right) == 1 and isinstance(
@@ -235,6 +324,7 @@ class CFGrammar:
                 ):
                     if new_rule.left != new_rule.right[0]:
                         unit_rules.put(new_rule)
+                        concerned_unit_rules.add(new_rule)
                 else:
                     if new_rule not in new_rules:
                         new_rules.append(new_rule)
@@ -325,7 +415,7 @@ class CFGrammar:
     @staticmethod
     def to_chomsky_normal_form(cfg):
         new_cfg = CFGrammar.remove_long_rules(cfg)
-        new_cfg = CFGrammar.remove_nullable_rules(cfg)
+        new_cfg = CFGrammar.remove_nullable_rules(new_cfg)
         new_cfg = CFGrammar.update_start(new_cfg)
         new_cfg = CFGrammar.remove_unit_rules(new_cfg)
         new_cfg = CFGrammar.remove_useless_rules(new_cfg)
