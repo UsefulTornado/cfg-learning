@@ -3,6 +3,7 @@ from .cky_parser import CKYParser
 from .graph import Graph
 from .utils import to_iterable
 
+import time
 from collections import defaultdict
 from itertools import product
 
@@ -89,7 +90,7 @@ class CFGLearner:
         return CFGrammar(start_nonterminal, rules)
 
     def _get_congruent_classes(
-        self, words: list[str], grammar: CFGrammar
+        self, words: list[str], grammar: CFGrammar, restrict_time: bool = False
     ) -> list[CongruentClass]:
         classes = defaultdict(set)
         cky_parser = CKYParser(grammar)
@@ -101,10 +102,15 @@ class CFGLearner:
                     return True
             return False
 
+        start = time.time()
+
         for word in words:
             for l, v, r in self._get_substrings_with_contexts(word):
                 if not add_congruent_class_if_exists(v):
                     classes[(l, r)].add(v)
+
+                if restrict_time and time.time() - start > 10:
+                    return []
 
         return list(map(CongruentClass, classes.values()))
 
@@ -144,12 +150,19 @@ class CFGLearner:
             for i in range(len(shortest_path) - 1)
         ]
 
-    def strong_learn(self, words):
+    def strong_learn(
+        self, words: list[str], restrict_time: bool = False
+    ) -> CFGrammar | None:
         weak_cfg = self.weak_learn(words)
-        classes = self._get_congruent_classes(words, weak_cfg)
+        classes = self._get_congruent_classes(words, weak_cfg, restrict_time)
+
+        if restrict_time and not classes:
+            return None
+
         prime_classes = list(
             filter(lambda x: self._test_class_primality(x, classes), classes)
         )
+
         prime_decompositions = {
             cls.rep: self._get_prime_decomposition(cls, prime_classes)
             for cls in classes
@@ -159,8 +172,9 @@ class CFGLearner:
         start = Nonterminal("S")
 
         lexical_productions = [
-            Rule(nonterminals[a], [Terminal(a)])
-            for a in filter(lambda x: len(x) == 1, nonterminals.keys())
+            Rule(nonterminals[cls.rep], [Terminal(a)])
+            for cls in prime_classes
+            for a in filter(lambda x: len(x) == 1, cls.words)
         ]
 
         init_productions = [
@@ -181,13 +195,9 @@ class CFGLearner:
                 [nonterminals[M.rep]] + [nonterminals[cls.rep] for cls in Q_primes],
             )
 
-            # print("============")
-            # print(N.rep, N.words)
-            # print(M.rep, M.words)
-            # print(Q.rep, Q.words)
-            # print(production)
-
-            if M.rep + "".join([cls.rep for cls in Q_primes]) in N.words and all(
+            if set(
+                "".join(x) for x in product(M.words, *[cls.words for cls in Q_primes])
+            ) & N.words and all(
                 M.rep + "".join([cls.rep for cls in Q_primes[:i]]) not in prime_strings
                 for i in range(1, len(Q_primes))
             ):
