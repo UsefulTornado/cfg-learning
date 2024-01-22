@@ -1,57 +1,38 @@
 from src.cfg_learner import CFGLearner
-from src.cfg import CFGrammar, Nonterminal, Terminal, Rule
 from src.cky_parser import CKYParser
+from src.cfg_parser import CFGParser
+from src.utils import get_words_from_grammar
 
-import random
-import nltk
-from nltk.parse.generate import generate
-
-
-def generate_random_grammar():
-    symbols = list(map(chr, range(ord("a"), ord("z") + 1)))
-    alphabet = random.sample(symbols, k=random.randint(3, 8))
-    terminals = list(map(Terminal, alphabet))
-    nonterminals = [Nonterminal("S")] + list(
-        map(
-            lambda x: Nonterminal(f"[[{x}]]"),
-            random.sample(symbols, k=random.randint(1, 5)),
-        )
-    )
-    rules = []
-    samples = nonterminals[1:] + terminals
-    for nt in nonterminals:
-        for _ in range(random.randint(1, 5)):
-            rhs = random.sample(samples, k=min(random.randint(1, 4), len(samples)))
-            rules.append(Rule(nt, rhs))
-    return CFGrammar(nonterminals[0], rules)
+from pathlib import Path
 
 
-def convert_cfg_to_nltk(cfg):
-    start = nltk.grammar.Nonterminal(cfg.start.symbol)
-    productions = [
-        nltk.grammar.Production(
-            lhs=nltk.grammar.Nonterminal(rule.left.symbol),
-            rhs=[
-                nltk.grammar.Nonterminal(x.symbol)
-                if isinstance(x, Nonterminal)
-                else x.symbol
-                for x in rule.right
-            ],
-        )
-        for rule in cfg.rules
-    ]
-    return nltk.grammar.CFG(start, productions)
+def test_from_generated_grammars():
+    max_words = 20
+    grammars_folder = "tests/generated_grammars"
+    grammar_paths = list(Path(grammars_folder).glob(r"*.txt"))
+    total = len(grammar_paths)
+    total_learned = 0
+    not_learned = []
 
+    for path in grammar_paths:
+        target_cfg = CFGParser().parse_grammar(path)
+        words = get_words_from_grammar(target_cfg)[:1000]
+        cfg_learner = CFGLearner()
 
-def test_from_positive_examples():
-    target_cfg = generate_random_grammar()
-    print(target_cfg)
-    nltk_cfg = convert_cfg_to_nltk(target_cfg)
-    words = list(map(lambda x: "".join(x), generate(nltk_cfg, n=20, depth=10)))
-    cfg_learner = CFGLearner()
+        print("\n" + "=" * 50 + "\n")
+        print(str(path), end="\n\n")
+        print(words[: max_words + 1])
 
-    for idx in range(1, 6):
-        cfg = cfg_learner.strong_learn(words[:idx])
-        cky_parser = CKYParser(cfg)
-        correct = sum(cky_parser.accepts(word) for word in words)
-        print(f"Accuracy of grammar learned by {idx} words: {correct/len(words)}")
+        for idx in range(1, max_words + 1):
+            cfg = cfg_learner.strong_learn(words[:idx])
+            cky_parser = CKYParser(cfg)
+            correct = sum(cky_parser.accepts(word) for word in words)
+            print(f"Accuracy of grammar learned by {idx} words: {correct/len(words)}")
+            if correct == len(words):
+                total_learned += 1
+                break
+            elif idx == max_words:
+                not_learned.append(path)
+
+    print(f"\nTotal learned grammars: {total_learned} out of {total}")
+    print(f"Grammars that are not learned: {not_learned}")
