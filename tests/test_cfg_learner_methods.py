@@ -177,16 +177,12 @@ def test_strong_learn1():
 def test_strong_learn2():
     cfg_learner = CFGLearner()
     cfg = cfg_learner.strong_learn(["ab", "ba", "abab", "abba", "baba", "bbaa"])
-    for nt in cfg.nonterminals:
-        print(nt)
     assert cfg.nonterminals == {
         Nonterminal("S"),
         Nonterminal("[[b]]"),
         Nonterminal("[[ab]]"),
         Nonterminal("[[a]]"),
     }
-    for rule in cfg.rules:
-        print(rule)
     assert set(cfg.rules) == {
         Rule(Nonterminal("S"), [Nonterminal("[[ab]]")]),
         Rule(Nonterminal("[[a]]"), [Terminal("a")]),
